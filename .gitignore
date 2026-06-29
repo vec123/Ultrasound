@@ -1,0 +1,12 @@
+.env
+*.vtp
+*.vtk
+*.vti
+*old*
+*log*
+*Dataset*
+*vti*
+*vtk*
+*US_samples
+*cache*
+*Code_BabyFM*

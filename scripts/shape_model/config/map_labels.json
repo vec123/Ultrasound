@@ -1,0 +1,7 @@
+{
+    "left_eye":  {"lmk_name": "enL", "radius": 25.0},
+    "right_eye": {"lmk_name": "enR", "radius": 25.0},
+    "nose":      {"lmk_name": "prn", "radius": 30.0},
+    "bridge":    {"lmk_name": "n",   "radius": 25.0},
+    "chin":      {"lmk_name": "sl",  "radius": 35.0}
+}

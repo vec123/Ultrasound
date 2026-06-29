@@ -1,0 +1,19 @@
+{
+    "eyes": {
+        "left_eye_inner":  {"code": "enL", "description": "Endocanthion (Inner corner of left eye)", "radius": 20.0},
+        "right_eye_inner": {"code": "enR", "description": "Endocanthion (Inner corner of right eye)", "radius": 20.0},
+        "left_eye_outer":  {"code": "exL", "description": "Exocanthion (Outer corner of left eye)", "radius": 20.0},
+        "right_eye_outer": {"code": "exR", "description": "Exocanthion (Outer corner of right eye)", "radius": 20.0}
+    },
+    "nose": {
+        "nose_tip":    {"code": "prn", "description": "Pronasale (Tip of the nose)", "radius": 30.0},
+        "nose_bridge": {"code": "n",   "description": "Nasion (Bridge of the nose)", "radius": 25.0}
+    },
+    "lower_face": {
+        "chin_crease": {"code": "sl",  "description": "Sublabiale (Crease below lower lip)", "radius": 35.0}
+    },
+    "ears": {
+        "left_ear":    {"code": "tL",  "description": "Tragion (Cartilage flap of left ear)", "radius": 35.0},
+        "right_ear":   {"code": "tR",  "description": "Tragion (Cartilage flap of right ear)", "radius": 35.0}
+    }
+}
