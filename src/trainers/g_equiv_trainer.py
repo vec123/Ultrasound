@@ -1,6 +1,7 @@
 import jax
 import jax.numpy as jnp
 import optax
+import flax
 from flax.training import train_state
 from functools import partial
 import matplotlib.pyplot as plt
@@ -21,7 +22,7 @@ class SO3EquivTrainer:
         self.decoder = decoder
         self.lr = learning_rate
         self.log_dir = log_dir
-    
+        self.loss_history = {}
     def check_grads(self, grads):
         # Flatten the tree to easily check all leaf nodes
         is_finite = jax.tree_util.tree_reduce(
@@ -93,7 +94,7 @@ class SO3EquivTrainer:
         state = state.apply_gradients(grads=grads)
         return state, loss, pred_pos, pos_canonical, inv, R_pred, t_pred
 
-    def fit(self, vertices, num_steps=1000, log_every=100, plot_every=200, consistency_check_epoch=50):
+    def fit(self, vertices, num_steps=1000, log_every=100, plot_every=200, save_every =2, consistency_check_epoch=50):
 
         rng = jax.random.PRNGKey(0)
         rng, e_key, d_key = jax.random.split(rng, 3)
@@ -105,7 +106,7 @@ class SO3EquivTrainer:
         graphs_batch = make_graphs_from_vertices_jax(true_verts, padding_mask,
                                                      rng,
                                         r_max= 0.4, 
-                                        dropout_rate= 0.9,
+                                        dropout_rate= 0.8,
                                         noise_std = 0.0)
 
         # Initialization
@@ -141,7 +142,7 @@ class SO3EquivTrainer:
             graphs_batch = make_graphs_from_vertices_jax(true_verts, padding_mask,
                                             rng,
                                             r_max= 0.4, 
-                                            dropout_rate= 0.9,
+                                            dropout_rate= 0.8,
                                             noise_std = 0.0)
             print("made graph")
         
@@ -163,6 +164,7 @@ class SO3EquivTrainer:
                 state, graphs_aug, true_verts, padding_mask, step
                 )
             print("Step Finished")
+            self.loss_history[f"loss_{step}"] = loss
             # ------------------------------------------
             # Logging & Visualization
             if step % log_every == 0 or step == num_steps - 1:
@@ -218,6 +220,9 @@ class SO3EquivTrainer:
                     gt_list = recover_original_list(true_verts, padding_mask)
                     gt = gt_list[0]
                     self.log_visualizations(orig_shapes, target_shapes, canon, preds, gt_list, step=step)
+            if step % save_every == 0:
+                checkpoint_dir = os.path.join(self.log_dir, "checkpoints")
+                self.save_checkpoint(state, step,checkpoint_dir )
         return state, preds
 
     def log_visualizations(self, original_b, target_b, canonical_b, rotated_b, gt_b, step, num_samples=3):
@@ -283,3 +288,30 @@ class SO3EquivTrainer:
             save_vtp_mesh(poly, path)
         
         print(f"--- Saved visualization VTPs for step {step} to {step_dir} ---")
+
+
+    def save_checkpoint(self, state, step, directory="checkpoints"):
+        """
+        Saves the current training state to disk.
+        """
+        os.makedirs(directory, exist_ok=True)
+        # Using flax's serialization to convert parameters to bytes
+        params_bytes = flax.serialization.to_bytes(state.params)
+        
+        save_path = os.path.join(directory, f"checkpoint_step_{step}.msgpack")
+        with open(save_path, "wb") as f:
+            f.write(params_bytes)
+        print(f"--- Model parameters saved to {save_path} ---")
+
+    def load_checkpoint(self, state, path):
+        """
+        Loads parameters from a saved checkpoint into the existing state.
+        """
+        with open(path, "rb") as f:
+            params_bytes = f.read()
+        
+        # Restore parameters from bytes
+        new_params = flax.serialization.from_bytes(state.params, params_bytes)
+        
+        # Replace the parameters in the train state
+        return state.replace(params=new_params)

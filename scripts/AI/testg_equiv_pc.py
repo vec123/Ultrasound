@@ -99,5 +99,6 @@ trainer = SO3EquivTrainer(encoder,decoder, learning_rate=1e-3, log_dir = "jit_lo
 final_state, final_preds = trainer.fit(
     vertices = vertices,
     num_steps=10000,
-    log_every = 1, 
+    log_every = 1,
+    save_every=2, 
     plot_every = 10)
