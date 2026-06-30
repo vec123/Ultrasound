@@ -4,7 +4,7 @@ import optax
 from flax.training import train_state
 from functools import partial
 import matplotlib.pyplot as plt
-from src.models.Equiv.data import make_graphs_from_vertices_jax 
+from src.models.Equiv.data import make_graphs_from_vertices 
 from src.utils.utils  import pad_vertices
 from src.models.Equiv.data_transforms import transform_graphs_explicit, get_y_rot
 from src.models.Equiv.vtk import save_graphs_as_vtp
@@ -21,6 +21,41 @@ class SO3EquivTrainer:
         self.decoder = decoder
         self.lr = learning_rate
         self.log_dir = log_dir
+       
+    def mask_batch_graphs(self, key, graphs, drop_prob=0.1):
+        """
+        Randomly drops nodes and their incident edges for each graph in a batch.
+        
+        Args:
+            key: jax.random.PRNGKey
+            graphs: jraph.GraphsTuple
+            drop_prob: float (0.0 to 1.0), probability of dropping a node
+        """
+        n_node = graphs.n_node
+        total_nodes = graphs.nodes.shape[0]
+        
+        # 1. Create a mask for nodes (1 = keep, 0 = drop)
+        keep_node_mask = jax.random.bernoulli(key, p=1.0 - drop_prob, shape=(total_nodes,))
+        
+        # 2. Map nodes to their respective graph index to identify which edges to drop
+        # Create an array [0, 0, 1, 1, 1, 2, 2...] representing graph IDs
+        node_to_graph_id = jnp.repeat(jnp.arange(len(n_node)), n_node)
+        
+        # 3. An edge is dropped if either the sender OR the receiver node is dropped
+        sender_mask = keep_node_mask[graphs.senders]
+        receiver_mask = keep_node_mask[graphs.receivers]
+        keep_edge_mask = sender_mask & receiver_mask
+        
+        # 4. Filter edges and nodes
+        # Note: If your model requires fixed-size inputs, use a padding mask 
+        # instead of physically removing them from the arrays.
+        
+        # For GNNs, you usually pass the mask to the message passing function
+        # rather than resizing the tensors, which breaks JIT.
+        return graphs._replace(
+            nodes=graphs.nodes * keep_node_mask[:, None],
+            edges=graphs.edges * keep_edge_mask[:, None] if graphs.edges is not None else None
+        ), keep_node_mask
     
     def check_grads(self, grads):
         # Flatten the tree to easily check all leaf nodes
@@ -31,6 +66,8 @@ class SO3EquivTrainer:
         
         if not is_finite:
             print("ALERT: Gradients contain NaNs or Infs!")
+            # Optional: identify which parameter is causing the issue
+            # jax.debug.print("Grads: {x}", x=grads) 
         else:
             print("Gradients are finite.")
 
@@ -80,6 +117,8 @@ class SO3EquivTrainer:
 
     @jax.jit(static_argnums=(0,))
     def train_step(self, state, graph, true_verts, padding_mask, step):
+        rng = jax.random.PRNGKey(step)
+        masked_graphs, node_mask = self.mask_batch_graphs(rng, graph, drop_prob=0.9)
         grad_fn = jax.value_and_grad(self.loss_fn, has_aux=True)
         print("Computing Grads")
         (loss, (pred_pos, pos_canonical, inv, R_pred, t_pred)), grads = grad_fn(
@@ -93,26 +132,19 @@ class SO3EquivTrainer:
         state = state.apply_gradients(grads=grads)
         return state, loss, pred_pos, pos_canonical, inv, R_pred, t_pred
 
-    def fit(self, vertices, num_steps=1000, log_every=100, plot_every=200, consistency_check_epoch=50):
+    def fit(self, graphs_batch, true_verts, padding_mask, num_steps=1000, log_every=100, plot_every=200):
 
         rng = jax.random.PRNGKey(0)
         rng, e_key, d_key = jax.random.split(rng, 3)
 
         key, subkey = jax.random.split(rng)
-
-        true_verts, padding_mask = pad_vertices(vertices)
-
-        graphs_batch = make_graphs_from_vertices_jax(true_verts, padding_mask,
-                                                     rng,
-                                        r_max= 0.4, 
-                                        dropout_rate= 0.9,
-                                        noise_std = 0.0)
+        masked_graphs, node_mask = self.mask_batch_graphs(subkey, graphs_batch, drop_prob=0.9)
 
         # Initialization
         print("Init Encoder")
-        encoder_vars = self.encoder.init(e_key, graphs_batch)
+        encoder_vars = self.encoder.init(e_key, masked_graphs)
         print("encoder apply")
-        (z_inv_mu, z_inv_logvar), _, _, _ = self.encoder.apply(encoder_vars, graphs_batch)
+        (z_inv_mu, z_inv_logvar), _, _, _ = self.encoder.apply(encoder_vars, masked_graphs)
         print("z_inv.shape: ", z_inv_mu.shape)
         print("Init Decoder")
         decoder_vars = self.decoder.init(d_key, z_inv_mu)
@@ -133,79 +165,67 @@ class SO3EquivTrainer:
         print(f"Starting training for {num_steps} steps...")
        
         for step in range(num_steps):
-            rng, step_key = jax.random.split(rng)
-           
-            k1, k2 = jax.random.split(step_key)
-            # Make Graph
-            print("making graph")
-            graphs_batch = make_graphs_from_vertices_jax(true_verts, padding_mask,
-                                            rng,
-                                            r_max= 0.4, 
-                                            dropout_rate= 0.9,
-                                            noise_std = 0.0)
-            print("made graph")
-        
-            n_graphs = graphs_batch.n_node.shape[0]    
-
+  
             # (Optional Augmentation (Apply Group Transform)
             # Get Group element
+            rng, step_key = jax.random.split(rng)
+            n_graphs = graphs_batch.n_node.shape[0]
+            k1, k2 = jax.random.split(step_key)
+            
             thetas = jax.random.uniform(k2, (n_graphs,), minval=0.0, maxval=0 * jnp.pi)
             rot_mats = jax.vmap(get_y_rot)(thetas)
             trans_vecs = jax.random.uniform(k1, (n_graphs, 3), minval=-0.0, maxval=0.0)
 
             # Apply Group element to the batch
-            print("makingtf graph")
-            graphs_aug = graphs_batch #transform_graphs_explicit(k2, graphs_batch, rot_mats, trans_vecs, permute=False)
-            print("tfd graph")
-            print("step")
+            graphs_aug = transform_graphs_explicit(k2, graphs_batch, rot_mats, trans_vecs, permute=False)
+
             # Perform Training Step
             state, loss, preds, canon, inv, R_pred, t_pred = self.train_step(
                 state, graphs_aug, true_verts, padding_mask, step
                 )
-            print("Step Finished")
+            
             # ------------------------------------------
             # Logging & Visualization
             if step % log_every == 0 or step == num_steps - 1:
                 print(f"\nStep {step:4d} | Loss: {loss:.6f}")
-            """
-            if step% consistency_check_epoch== 0:
-                        if graphs_batch.n_node.shape[0] >= 2:
-                            graphs_list = jraph.unbatch(graphs_batch)
-                            if len(graphs_list) >= 2:
-                                    g1 = graphs_list[0]
-                                    g2 = graphs_list[1]
 
-                                    (inv_mu_1, _), _, _, _ = self.encoder.apply({'params': state.params['encoder']}, g1)
-                                    (inv_mu_2, _), _, _, _ = self.encoder.apply({'params': state.params['encoder']}, g2)
+                if graphs_batch.n_node.shape[0] >= 2:
+                    graphs_list = jraph.unbatch(graphs_batch)
+                    if len(graphs_list) >= 2:
+                            g1 = graphs_list[0]
+                            g2 = graphs_list[1]
 
-                                    latent_dist = jnp.mean(jnp.abs(inv_mu_1 - inv_mu_2))
-                                    print(f"\n[DEBUG] Latent distance between graph 0 and 1: {latent_dist:.6f}")
-                                    print("inv_mu_1: ", inv_mu_1)
-                                    print("inv_mu_2: ", inv_mu_2)
-                    
+                            (inv_mu_1, _), _, _, _ = self.encoder.apply({'params': state.params['encoder']}, g1)
+                            (inv_mu_2, _), _, _, _ = self.encoder.apply({'params': state.params['encoder']}, g2)
 
-                        # Consistency Checks - test encoder on transformed and original data
-                        (inv_orig_mu, inv_orig_logvar), R_orig, _, t_orig = self.encoder.apply({'params': state.params['encoder']}, graphs_batch)
+                            latent_dist = jnp.mean(jnp.abs(inv_mu_1 - inv_mu_2))
+                            print(f"\n[DEBUG] Latent distance between graph 0 and 1: {latent_dist:.6f}")
+                            print("inv_mu_1: ", inv_mu_1)
+                            print("inv_mu_2: ", inv_mu_2)
+               
 
-                        # Consistency Checks - test encoder on transformed and original data
-                        (inv_orig_mu, inv_orig_logvar), R_orig, _, t_orig = self.encoder.apply({'params': state.params['encoder']}, graphs_batch)
-                        (inv_aug_mu, inv_aug_logvar), R_aug, _, t_aug = self.encoder.apply({'params': state.params['encoder']}, graphs_aug)
-                        inv_orig = inv_orig_mu
-                        inv_aug = inv_aug_mu
-                        inv_delta = jnp.mean(jnp.abs(inv_orig - inv_aug))
+                # Consistency Checks - test encoder on transformed and original data
+                (inv_orig_mu, inv_orig_logvar), R_orig, _, t_orig = self.encoder.apply({'params': state.params['encoder']}, graphs_batch)
 
-                        # R_aug should be rot_mats @ R_orig
-                        R_expected = jnp.einsum('bij,bjk->bik', rot_mats, R_orig)
-                        frame_delta = jnp.mean(jnp.abs(R_aug - R_expected))
+                # Consistency Checks - test encoder on transformed and original data
+                (inv_orig_mu, inv_orig_logvar), R_orig, _, t_orig = self.encoder.apply({'params': state.params['encoder']}, graphs_batch)
+                (inv_aug_mu, inv_aug_logvar), R_aug, _, t_aug = self.encoder.apply({'params': state.params['encoder']}, graphs_aug)
+                inv_orig = inv_orig_mu
+                inv_aug = inv_aug_mu
+                inv_delta = jnp.mean(jnp.abs(inv_orig - inv_aug))
 
-                        # t_aug should be (rot_mats @ t_orig) + trans_vecs
-                        t_expected = jnp.einsum('bij,bj->bi', rot_mats, t_orig) + trans_vecs
-                        t_delta = jnp.mean(jnp.abs(t_aug - t_expected))
+                # R_aug should be rot_mats @ R_orig
+                R_expected = jnp.einsum('bij,bjk->bik', rot_mats, R_orig)
+                frame_delta = jnp.mean(jnp.abs(R_aug - R_expected))
 
-                        
-                        print(f"Consistency Deltas -> Inv: {inv_delta:.2e} | Frame: {frame_delta:.2e} | Transl: {t_delta:.2e}")
-            """
-            if step % plot_every == 0:
+                # t_aug should be (rot_mats @ t_orig) + trans_vecs
+                t_expected = jnp.einsum('bij,bj->bi', rot_mats, t_orig) + trans_vecs
+                t_delta = jnp.mean(jnp.abs(t_aug - t_expected))
+
+                
+                print(f"Consistency Deltas -> Inv: {inv_delta:.2e} | Frame: {frame_delta:.2e} | Transl: {t_delta:.2e}")
+
+                if step % plot_every == 0:
                     def get_shapes(graph):
                         split_indices = jnp.cumsum(graph.n_node[:-1])
                         return jnp.split(graph.nodes, split_indices)

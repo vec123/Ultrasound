@@ -77,13 +77,15 @@ for i in range(nOfSamples):
     
     normals = vertex_normals(vertices, [])
     mean_curv = compute_mean_curvature(vertices)
+    poly = create_polydata(vertices)
+
     """ 
     k_eig = 100
     L, M, evals, evecs = compute_spectral_operators(vertices, k_eig =k_eig)
     test_LBO_spectrum(L, M, evals, evecs, k_eig)
 
     gradX, gradY = compute_grads(vertices)          
-    poly = create_polydata(vertices)
+  
 
     for i in range(gradX.shape[1]):
         poly = add_point_field(poly, gradX[:, i], f"gradX_eig_{i+1}")
@@ -93,15 +95,15 @@ for i in range(nOfSamples):
         poly = add_point_field(poly, evecs[:, i], f"eigenvector_{i+1}")
     poly = add_point_field(poly, normals, "normals")
     poly = add_point_field(poly, mean_curv, "mean_curvature")  
-
+    """
     #  Add Heatmaps
     for lmk_idx, lmk_name in zip(lmks_vertsIND, landmark_names):
         dists = np.linalg.norm(vertices - vertices[lmk_idx], axis=1)
         heatmap = np.exp(-(dists ** 2) / (2 * (sigma ** 2))).astype(np.float32)
         poly = add_point_field(poly, heatmap, f"heatmap_{lmk_name}")
 
-    #save_vtp_mesh(poly,  os.path.join(shape_dir, f"sample_{i+1:02d}.vtp"))
-    """
+    save_vtp_mesh(poly,  os.path.join(shape_dir, f"sample_{i+1:02d}.vtp"))
+   
     # 5. Save Regions
     for reg_name, cfg in region_config.items():
         part_dir = os.path.join(dataset_dir, reg_name)

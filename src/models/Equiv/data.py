@@ -42,6 +42,74 @@ def make_single_graph_jit(nodes, key, mask, r_max, dropout_rate, noise_std, max_
         n_edge=jnp.array([max_edges]) 
     ), final_mask
 
+
+@jax.jit
+def make_graphs_from_vertices_jax(vertices_padded, masks, key, r_max=0.4, dropout_rate=0.9, noise_std=0.0):
+    MAX_EDGES_PER_GRAPH = 5000 
+    batch_size, num_nodes, _ = vertices_padded.shape
+
+    def process_single_graph(nodes, mask, key):
+        k1, k2 = jax.random.split(key)
+        
+        # Random Dropout
+        probs = jax.random.uniform(k1, shape=(nodes.shape[0],))
+        keep = (probs > dropout_rate) & (mask > 0.5)
+        current_mask = keep.astype(jnp.float32)
+        
+        # Add Gaussian Noise
+        noise = jax.random.normal(k2, shape=nodes.shape) * noise_std
+        nodes = nodes + (noise * current_mask[:, None])
+        
+        # Compute Adjacency Matrix
+        diff = nodes[:, None, :] - nodes[None, :, :]
+        dist_sq = jnp.sum(diff**2, axis=-1)
+        
+        # Distance constraint + mask + no self-loops
+        # We add a large value to invalid entries so argwhere doesn't pick them up
+        adj = (dist_sq < r_max**2) & \
+              (current_mask[:, None] > 0.5) & \
+              (current_mask[None, :] > 0.5) & \
+              (~jnp.eye(nodes.shape[0], dtype=bool))
+        
+        # Get edges and pad to MAX_EDGES_PER_GRAPH
+        edges = jnp.argwhere(adj, size=MAX_EDGES_PER_GRAPH, fill_value=-1)
+        return nodes, current_mask, edges
+
+    # Vectorized processing
+    keys = jax.random.split(key, batch_size)
+    nodes, masks_out, edges_list = jax.vmap(process_single_graph)(vertices_padded, masks, keys)
+    
+    # Calculate global offsets for unique node indices
+    offsets = jnp.arange(batch_size) * num_nodes
+    # Expand offsets to match the shape of edges_list (batch, max_edges, 2)
+    batch_offsets = offsets[:, None, None]
+    
+    # Apply offsets only to valid edges (where edges != -1)
+    # Using jnp.where to keep indices static
+    valid_mask = (edges_list[:, :, 0] != -1)
+    
+    # Add offsets to senders and receivers; invalid edges stay as -1
+    raw_senders = edges_list[:, :, 0] + (batch_offsets[..., 0] * valid_mask)
+    raw_receivers = edges_list[:, :, 1] + (batch_offsets[..., 0] * valid_mask)
+    
+    # Finalize arrays as flat
+    senders = jnp.where(valid_mask, raw_senders, -1).flatten()
+    receivers = jnp.where(valid_mask, raw_receivers, -1).flatten()
+    
+    # n_node and n_edge must be integers representing the count
+    n_node = jnp.sum(masks_out, axis=1).astype(jnp.int32)
+    n_edge = jnp.sum(valid_mask, axis=1).astype(jnp.int32)
+
+    return jraph.GraphsTuple(
+        nodes=nodes.reshape(-1, 3),
+        edges=None,
+        senders=senders,
+        receivers=receivers,
+        n_node=n_node,
+        n_edge=n_edge,
+        globals=None
+    )
+
 def make_graphs_from_vertices(
     vertices_list: list, 
     key: jax.random.PRNGKey,

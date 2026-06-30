@@ -22,10 +22,12 @@ jax.config.update("jax_enable_x64", True)
 
 
 PROJECT_ROOT = os.environ.get("PROJECT_ROOT")
-
+SHAPES_ROOT = os.path.join(PROJECT_ROOT, "scripts", "shape_model")
+SHAPE_DATA_ROOT =  os.path.join(SHAPES_ROOT, "vtp_samples")
 vertices = []
 for part in ["mouth", "nose"]:
-    DATASET_1 = os.path.join(PROJECT_ROOT, "Dataset_faceparts_small", part, "*.vtp")
+    DATASET_1 = os.path.join(SHAPE_DATA_ROOT, "Dataset_faceparts_normalized_small", part, "*.vtp")
+    print("looking in: ", DATASET_1)
     vtp_files = glob.glob(DATASET_1)
     print("getting vtp_files: ", vtp_files)
     for file in vtp_files:
@@ -37,7 +39,7 @@ master_key = jax.random.PRNGKey(42)
 batched_graphs = make_graphs_from_vertices(vertices, 
                                          master_key,
                                         r_max= 0.4, 
-                                        dropout_rate= 0.0,
+                                        dropout_rate= 0.9,
                                         noise_std = 0.0)
 
 print(batched_graphs.n_edge)
@@ -93,11 +95,9 @@ decoder =  FoldingDecoder(num_samples = 256)
 gt_vertices, mask = pad_vertices(vertices)
 
 
-trainer = SO3EquivTrainer(encoder,decoder, learning_rate=1e-3, log_dir = "log")
+trainer = SO3EquivTrainer(encoder,decoder, learning_rate=1e-3, log_dir = "jit_log")
 final_state, final_preds = trainer.fit(
-    graphs_batch = batched_graphs,
-    true_verts = gt_vertices,
-    padding_mask = mask,
+    vertices = vertices,
     num_steps=10000,
     log_every = 1, 
     plot_every = 10)
