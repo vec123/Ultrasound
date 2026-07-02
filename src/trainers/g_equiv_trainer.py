@@ -1,3 +1,5 @@
+from fileinput import filename
+
 import jax
 import jax.numpy as jnp
 import optax
@@ -5,7 +7,7 @@ import flax
 from flax.training import train_state
 from functools import partial
 import matplotlib.pyplot as plt
-from src.models.Equiv.data import make_graphs_from_vertices_jax 
+from src.models.Equiv.data import make_graphs_from_vertices_jax, get_surviving_nodes
 from src.utils.utils  import pad_vertices
 from src.models.Equiv.data_transforms import transform_graphs_explicit, get_y_rot
 from src.models.Equiv.vtk import save_graphs_as_vtp
@@ -79,8 +81,9 @@ class SO3EquivTrainer:
         loss = recon_loss  + kl_gain*kl_loss
         return loss, (pred_pos, pos_canonical, inv, R_frame, t_frame)
 
-    @jax.jit(static_argnums=(0,))
+    @jax.jit(static_argnums=(0,4))
     def train_step(self, state, graph, true_verts, padding_mask, step):
+        jax.debug.print("Executing train_step (Step: {s})", s=step)
         grad_fn = jax.value_and_grad(self.loss_fn, has_aux=True)
         print("Computing Grads")
         (loss, (pred_pos, pos_canonical, inv, R_pred, t_pred)), grads = grad_fn(
@@ -103,7 +106,7 @@ class SO3EquivTrainer:
 
         true_verts, padding_mask = pad_vertices(vertices)
 
-        graphs_batch = make_graphs_from_vertices_jax(true_verts, padding_mask,
+        graphs_batch, dropout_masks = make_graphs_from_vertices_jax(true_verts, padding_mask,
                                                      rng,
                                         r_max= 0.4, 
                                         dropout_rate= 0.8,
@@ -139,7 +142,7 @@ class SO3EquivTrainer:
             k1, k2 = jax.random.split(step_key)
             # Make Graph
             print("making graph")
-            graphs_batch = make_graphs_from_vertices_jax(true_verts, padding_mask,
+            graphs_batch, dropout_masks = make_graphs_from_vertices_jax(true_verts, padding_mask,
                                             rng,
                                             r_max= 0.4, 
                                             dropout_rate= 0.8,
@@ -164,11 +167,12 @@ class SO3EquivTrainer:
                 state, graphs_aug, true_verts, padding_mask, step
                 )
             print("Step Finished")
-            self.loss_history[f"loss_{step}"] = loss
+            self.loss_history[f"loss_{step}"] = float(loss)
             # ------------------------------------------
             # Logging & Visualization
             if step % log_every == 0 or step == num_steps - 1:
                 print(f"\nStep {step:4d} | Loss: {loss:.6f}")
+              
             """
             if step% consistency_check_epoch== 0:
                         if graphs_batch.n_node.shape[0] >= 2:
@@ -208,19 +212,33 @@ class SO3EquivTrainer:
                         print(f"Consistency Deltas -> Inv: {inv_delta:.2e} | Frame: {frame_delta:.2e} | Transl: {t_delta:.2e}")
             """
             if step % plot_every == 0:
-                    def get_shapes(graph):
-                        split_indices = jnp.cumsum(graph.n_node[:-1])
-                        return jnp.split(graph.nodes, split_indices)
+                    graphs_batch_list = jraph.unbatch(graphs_batch)
 
-                    target_shapes = get_shapes(graphs_aug)
-                    orig_shapes = get_shapes(graphs_batch)
+                    orig_shapes = []
+                    for i in range(true_verts.shape[0]):
+                        nodes = true_verts[i]
+                        mask = dropout_masks[i] > 0.5
+                        valid_nodes = nodes[mask]
+                        orig_shapes.append(valid_nodes)
+
+                    target_shapes = []
+                    for i in range(true_verts.shape[0]):
+                        nodes = true_verts[i]
+                        mask = dropout_masks[i] > 0.5
+                        valid_nodes = nodes[mask]
+                        orig_shapes.append(valid_nodes)
 
                     # Pass these to log_visualizations
                     gt =  true_verts, padding_mask
                     gt_list = recover_original_list(true_verts, padding_mask)
                     gt = gt_list[0]
-                    self.log_visualizations(orig_shapes, target_shapes, canon, preds, gt_list, step=step)
+                    self.log_visualizations(orig_shapes, orig_shapes, canon, preds, gt_list, step=step)
+
             if step % save_every == 0:
+                filename = os.path.join(self.log_dir,"loss_history", f"loss_history_step_{step}.png")
+                os.makedirs(os.path.dirname(filename), exist_ok=True)
+                self.save_loss_plot(filename=filename)
+            
                 checkpoint_dir = os.path.join(self.log_dir, "checkpoints")
                 self.save_checkpoint(state, step,checkpoint_dir )
         return state, preds
@@ -289,6 +307,47 @@ class SO3EquivTrainer:
         
         print(f"--- Saved visualization VTPs for step {step} to {step_dir} ---")
 
+    def save_loss_plot(self, filename):
+            """
+            Saves a plot of the loss history and the last 100 steps to the provided path.
+            """
+            # Ensure the directory for the specific filename exists
+            os.makedirs(os.path.dirname(filename), exist_ok=True)
+            
+            # Extract and sort data
+            sorted_keys = sorted(self.loss_history.keys(), key=lambda x: int(x.split('_')[1]))
+            # Ensure values are converted to standard floats for matplotlib
+            losses = [float(self.loss_history[k]) for k in sorted_keys]
+            steps = [int(k.split('_')[1]) for k in sorted_keys]
+            
+            # Create figure with 2 subplots
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 5))
+            
+            # Plot 1: Full History
+            ax1.plot(steps, losses, label="Training Loss", color="teal")
+            ax1.set_title("Full Training Loss History")
+            ax1.set_xlabel("Step")
+            ax1.set_ylabel("Loss")
+            ax1.grid(True, linestyle='--', alpha=0.6)
+            ax1.legend()
+            
+            # Plot 2: Last 100 steps (or all if fewer than 100)
+            last_n = 100
+            recent_steps = steps[-last_n:]
+            recent_losses = losses[-last_n:]
+            
+            ax2.plot(recent_steps, recent_losses, label=f"Last {len(recent_steps)} Steps", color="crimson")
+            ax2.set_title(f"Loss (Last {last_n} Steps)")
+            ax2.set_xlabel("Step")
+            ax2.set_ylabel("Loss")
+            ax2.grid(True, linestyle='--', alpha=0.6)
+            ax2.legend()
+            
+            # Save and cleanup
+            plt.tight_layout()
+            plt.savefig(filename)
+            plt.close()
+            print(f"--- Saved loss plots to {filename} ---")
 
     def save_checkpoint(self, state, step, directory="checkpoints"):
         """

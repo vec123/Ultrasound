@@ -108,7 +108,12 @@ def make_graphs_from_vertices_jax(vertices_padded, masks, key, r_max=0.4, dropou
         n_node=n_node,
         n_edge=n_edge,
         globals=None
-    )
+    ), masks_out
+
+def get_surviving_nodes(nodes_array, mask_array):
+    # nodes_array: (N_total, 3) 
+    # mask_array: (N_total)
+    return nodes_array[mask_array > 0.5]
 
 def make_graphs_from_vertices(
     vertices_list: list, 

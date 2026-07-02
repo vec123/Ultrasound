@@ -1,0 +1,8 @@
+numpy
+vtk
+scipy
+scikit-learn
+dotenv
+robust_laplacian
+potpourri3d
+pyamg

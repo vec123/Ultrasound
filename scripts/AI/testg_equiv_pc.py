@@ -95,10 +95,10 @@ decoder =  FoldingDecoder(num_samples = 256)
 gt_vertices, mask = pad_vertices(vertices)
 
 
-trainer = SO3EquivTrainer(encoder,decoder, learning_rate=1e-3, log_dir = "jit_log")
+trainer = SO3EquivTrainer(encoder,decoder, learning_rate=1e-3, log_dir = "debug_logs_2")
 final_state, final_preds = trainer.fit(
     vertices = vertices,
     num_steps=10000,
     log_every = 1,
-    save_every=2, 
-    plot_every = 10)
+    save_every=50, 
+    plot_every = 50)
