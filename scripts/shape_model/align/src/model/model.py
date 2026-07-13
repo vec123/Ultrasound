@@ -42,6 +42,38 @@ class StatisticalShapeModel:
     def landmark_names(self):
         return [n.strip() for n in self.landmarks["names "]]
 
+    def print_summary(self, alpha=None):
+        """
+        Prints statistical information regarding the model and a specific instance.
+        """
+        print("--- Summary ---")
+        print(f"Vertices: {self.n_vertices}")
+        print(f"Components: {self.n_components}")
+        
+        # Eigenvalue statistics
+        print(f"\nEigenvalues (Total Variance: {np.sum(self.eigenvalues):.8f}):")
+        print(f"  Range: [{self.eigenvalues.min():.8f}, {self.eigenvalues.max():.8f}]")
+        print(f"  Mean: {np.mean(self.eigenvalues):.8f}")
+
+        # Eigenfunction statistics (the modes of variation)
+        print(f"\nEigenfunctions (Magnitude per mode):")
+        mode_norms = np.linalg.norm(self.eigenfunctions, axis=0)
+        print(f"  Range: [{mode_norms.min():.8f}, {mode_norms.max():.8f}]")
+        print("Phi norm:", np.linalg.norm(self.eigenfunctions))
+
+        # Mean shape position statistics
+        mean_reshaped = self.mean.reshape(-1, 3)
+        print(f"\nMean Shape Positions (Spatial):")
+        print(f"  Centroid: {np.mean(mean_reshaped, axis=0)}")
+        print(f"  Spatial Range (X, Y, Z):")
+        print(f"    Min: {mean_reshaped.min(axis=0)}")
+        print(f"    Max: {mean_reshaped.max(axis=0)}")
+
+        if alpha is not None:
+            print(f"\nProvided Alpha Coefficients (Shape Instance):")
+            print(f"  Range: [{alpha.min():.4f}, {alpha.max():.4f}]")
+            print(f"  L2 Norm: {np.linalg.norm(alpha):.4f}")
+
 @dataclass
 class ShapeInstance:
     model: StatisticalShapeModel
@@ -187,7 +219,7 @@ class ShapeInstance:
 
         return coeffs
     
-    def clamp_coefficients(self, p=0.95):
+    def clamp_coefficients(self, p=0.99):
         """
         Constrains alpha so that sum( (alpha_i / sqrt(lambda_i))^2 ) <= chi2_threshold
         """
@@ -202,8 +234,10 @@ class ShapeInstance:
         
         # Define the threshold beta^2 from the Chi-square distribution
         M = self.model.n_components
-        beta_sq = chi2.ppf(p, df=M)
-        print("beta_sq: ", beta_sq)
+        beta_sq = 10000**2 # * chi2.ppf(p, df=M)
+        print(" M: ", M)
+        print(" >>>>>>>>>>>>>>>> beta_sq: ", beta_sq)
+        print(" >>>>>>>>>>>>>>>> beta: ", beta_sq**0.5)
         # If outside the hyper-ellipsoid, scale alpha back to the boundary
         if dist_sq > beta_sq:
             scale = np.sqrt(beta_sq / dist_sq)

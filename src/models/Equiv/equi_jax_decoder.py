@@ -3,6 +3,7 @@ import jax.numpy as jnp
 import haiku as hk
 import e3nn_jax as e3nn
 import jax
+
 class ShapeDecoder(nn.Module):
     """Decodes latent vectors back into 4 coordinate positions [4, 3]."""
 

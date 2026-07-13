@@ -16,7 +16,8 @@ from src.geometry.vtk import create_polydata, save_vtp_mesh
 from src.utils.utils  import recover_original_list
 import jraph
 import os
-
+import numpy as np  
+import gc
 
 class SO3EquivTrainer:
     def __init__(self, encoder, decoder, learning_rate=1e-5, log_dir = "logs"):
@@ -44,12 +45,8 @@ class SO3EquivTrainer:
         # 1. Sample epsilon from N(0, 1)
         # The shape should match the mu/logvar output
         eps = jax.random.normal(key, shape=mu.shape)
-        
-        # 2. Compute standard deviation from logvar
-        # std = exp(0.5 * logvar)
         std = jnp.exp(0.5 * logvar)
         
-        # 3. Scale and shift
         z = mu + std * eps
         return z
     
@@ -81,9 +78,9 @@ class SO3EquivTrainer:
         loss = recon_loss  + kl_gain*kl_loss
         return loss, (pred_pos, pos_canonical, inv, R_frame, t_frame)
 
-    @jax.jit(static_argnums=(0,4))
-    def train_step(self, state, graph, true_verts, padding_mask, step):
-        jax.debug.print("Executing train_step (Step: {s})", s=step)
+    jax.jit(static_argnums=(0))
+    def train_step(self, state, graph, true_verts, padding_mask):
+       # jax.debug.print("Tracing train_step (If you see this every step, you have a bug)")
         grad_fn = jax.value_and_grad(self.loss_fn, has_aux=True)
         print("Computing Grads")
         (loss, (pred_pos, pos_canonical, inv, R_pred, t_pred)), grads = grad_fn(
@@ -164,10 +161,12 @@ class SO3EquivTrainer:
             print("step")
             # Perform Training Step
             state, loss, preds, canon, inv, R_pred, t_pred = self.train_step(
-                state, graphs_aug, true_verts, padding_mask, step
+                state, graphs_aug, true_verts, padding_mask
                 )
             print("Step Finished")
-            self.loss_history[f"loss_{step}"] = float(loss)
+
+            loss.block_until_ready() 
+            # self.loss_history[f"loss_{step}"] = float(loss)
             # ------------------------------------------
             # Logging & Visualization
             if step % log_every == 0 or step == num_steps - 1:
@@ -233,18 +232,20 @@ class SO3EquivTrainer:
                     gt_list = recover_original_list(true_verts, padding_mask)
                     gt = gt_list[0]
                     self.log_visualizations(orig_shapes, orig_shapes, canon, preds, gt_list, step=step)
-
+                    gc.collect()
+                   # del orig_shapes, target_shapes, gt_list, canon, preds
             if step % save_every == 0:
-                filename = os.path.join(self.log_dir,"loss_history", f"loss_history_step_{step}.png")
-                os.makedirs(os.path.dirname(filename), exist_ok=True)
-                self.save_loss_plot(filename=filename)
+                #filename = os.path.join(self.log_dir,"loss_history", f"loss_history_step_{step}.png")
+               # os.makedirs(os.path.dirname(filename), exist_ok=True)
+                #self.save_loss_plot(filename=filename)
             
                 checkpoint_dir = os.path.join(self.log_dir, "checkpoints")
                 self.save_checkpoint(state, step,checkpoint_dir )
+                gc.collect()
         return state, preds
 
     def log_visualizations(self, original_b, target_b, canonical_b, rotated_b, gt_b, step, num_samples=3):
-        sample_num = min(2, len(original_b))
+        sample_num = min(4, len(original_b))
         for sample_idx in range(sample_num):
             sample_dir = os.path.join(f"{self.log_dir}", f"sample_{sample_idx}")
             os.makedirs(sample_dir, exist_ok=True)
@@ -281,6 +282,8 @@ class SO3EquivTrainer:
             path = os.path.join(sample_dir, f"plot_step_{step}.png")
             plt.savefig(path)
             plt.close()
+
+            
             print(f"--- Saved plot and VTPs for step {step} ---")
 
   
@@ -291,12 +294,12 @@ class SO3EquivTrainer:
         step_dir = f"{self.log_dir}/vtk"
         os.makedirs(step_dir, exist_ok=True)
         data = {
-            "original": original,
-            "target": target,
-            "canonical": canonical,
-            "rotated": rotated,
-            "gt": gt
-        }
+                "original": np.array(jax.device_get(original)),
+                "target": np.array(jax.device_get(target)),
+                "canonical": np.array(jax.device_get(canonical)),
+                "rotated": np.array(jax.device_get(rotated)),
+                "gt": np.array(jax.device_get(gt))
+            }
         for key, value in data.items():
             print(f"DEBUG: {key} batch shape: {value.shape}")
             d = value

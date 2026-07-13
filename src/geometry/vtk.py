@@ -206,7 +206,7 @@ def add_point_field(polydata, field_data, field_name="field"):
 def save_vtp_mesh(polydata, vtk_path, binary=True):
     """Saves the PolyData object to disk using the XML format (VTP)."""
     print("Saving to:", vtk_path)
-    
+    os.makedirs(os.path.dirname(vtk_path), exist_ok=True)
     # Use vtkXMLPolyDataWriter instead of vtkPolyDataWriter
     writer = vtk.vtkXMLPolyDataWriter()
     writer.SetFileName(vtk_path)

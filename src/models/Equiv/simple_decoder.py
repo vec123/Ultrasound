@@ -7,8 +7,6 @@ import jax.numpy as jnp
 from flax import linen as nn
 import math
 
-jax.config.update("jax_debug_nans", True)
-jax.config.update("jax_enable_x64", True)
 
 class FoldingDecoder(nn.Module):
     num_samples: int = 256

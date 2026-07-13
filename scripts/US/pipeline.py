@@ -7,21 +7,22 @@ load_dotenv()
 
 PROJECT_ROOT = os.environ.get("PROJECT_ROOT")
 
-INPUT_DIR = os.path.join(PROJECT_ROOT, "US_samples","US_samples","4","20_semanas","NRRD")
-OUTPUT_DIR = os.path.join(PROJECT_ROOT, "US_samples", "US_samples","4","20_semanas", "VTK")
-CACHE_DIR = os.path.join(PROJECT_ROOT, "US_samples", "US_samples","4","20_semanas", "Cache")
+INPUT_DIR = os.path.join(PROJECT_ROOT, "US_samples","US_samples","3","20_semanas","NRRD")
+OUTPUT_DIR = os.path.join(PROJECT_ROOT, "US_samples", "US_samples_hr","3","20_semanas", "VTK")
+CACHE_DIR = os.path.join(PROJECT_ROOT, "US_samples", "US_samples_hr","3","20_semanas", "Cache")
 CONTOUR_VALUE = 70
 K_EIG = 200
-REDUCTION_FACTOR = 0.9
+REDUCTION_FACTOR = 0.1
 OPERATORS = False
 
-from src.geometry.vtk import convert_single_nrrd, filter_largest_component, clean_mesh, reduce_mesh, create_polydata
-from src.geometry.vtk import convert_single_nrrd, extract_arrays_from_polydata, add_point_field, save_vtp_mesh
-from src.geometry.geometry import compute_operators, mesh_vertex_normals, get_operators
-from src.geometry.geometry import to_basis, from_basis
-from src.geometry.geometry import to_laplace_basis, from_laplace_basis
-from src.geometry.geometry import get_operators
-from src.geometry.geometry import normalize_field, compute_mean_curvature, compute_heat_kernel_signature
+from src.geometry.vtk import  filter_largest_component, clean_mesh, reduce_mesh, create_polydata
+from src.geometry.vtk import extract_arrays_from_polydata, add_point_field, save_vtp_mesh
+from src.geometry.nrrd_vtk import convert_single_nrrd
+from src.geometry.geometry_torch import mesh_vertex_normals, get_operators
+from src.geometry.geometry_torch import to_basis, from_basis
+from src.geometry.geometry_torch import to_laplace_basis, from_laplace_basis
+from src.geometry.geometry_torch import get_operators
+from src.geometry.geometry_old import normalize_field, compute_mean_curvature, compute_heat_kernel_signature
 
 if __name__ == "__main__":
 
